@@ -13,11 +13,10 @@
 #include "vga.h"
 #include "registers.h"
 
-static byte *VGA =
 #ifdef DJGPP
-(byte *)0xA0000;          /* this points to video memory. */
+static byte *VGA = (byte *)0xA0000;          /* this points to video memory. */
 #else
-(byte *)0xA0000000L;        /* this points to video memory. */
+static byte far *VGA = (byte far *)0xA0000000L;        /* this points to video memory. */
 #endif
 
 static unsigned long SCREEN_SIZE;
@@ -26,6 +25,8 @@ static word visual_page = 0;
 
 // For non planar mode only
 static byte* doublebuffer;
+
+/* These 3 funtions are for setting the VGA screen mode*/
 
 static void readyVgaRegs(void)
 {
@@ -229,8 +230,8 @@ static void VGA_Draw_sprite_planar_notrans(BITMAP *bmp, short x, short y, unsign
 	{
 		outp(SC_INDEX, MAP_MASK);          /* select plane */
 		outp(SC_DATA,  1 << ((plane+x)&3) );
-		screen_offset = ((dword)y*screen_width+x+plane) >> 2;
-		for(j=0; j<bmp->height; j++)
+		screen_offset = ((dword)y*bmp->sprite_width+x+plane) >> 2;
+		for(j=0; j<bmp->sprite_height; j++)
 		{
 			memcpy(&VGA[quarter_scr+screen_offset], &bmp->pdata[plane][sprite_offset+bitmap_offset], (bmp->sprite_width >> 2));
 			bitmap_offset+=bmp->sprite_width>>2;
@@ -308,7 +309,7 @@ static void VGA_Draw_sprite_normal_notrans(BITMAP *bmp, short x, short y, unsign
 	}
 }
 
-static void VGA_Load_static_bmp_planar(const char *file, BITMAP *b, unsigned short s_width, unsigned short s_height)
+static void VGA_Load_static_bmp_planar(const char *file, BITMAP *b, unsigned short s_width, unsigned short s_height, unsigned char load_pal)
 {
 	FILE *fp;
 	int32_t index, size;
@@ -357,7 +358,20 @@ static void VGA_Load_static_bmp_planar(const char *file, BITMAP *b, unsigned sho
 		}
 	}
 
-	fskip(fp, num_colors*4);
+	if (load_pal == 1)
+	{
+		for(index=0;index<num_colors;index++)
+		{
+			VGA_8158_GAMEPAL[(int)(index*3+2)] = fgetc(fp) >> 2;
+			VGA_8158_GAMEPAL[(int)(index*3+1)] = fgetc(fp) >> 2;
+			VGA_8158_GAMEPAL[(int)(index*3+0)] = fgetc(fp) >> 2;
+			fgetc(fp);
+		}	
+	}
+	else
+	{
+		fskip(fp,num_colors*4);
+	}
 
 	/* read the bitmap */
 	for(index = (b->height-1)*b->width; index >= 0;index-=b->width)
@@ -376,7 +390,7 @@ static void VGA_Load_static_bmp_planar(const char *file, BITMAP *b, unsigned sho
 	b->sprite_height = s_height;
 }
 
-static void VGA_Load_bmp(const char *file, BITMAP *b, unsigned short s_width, unsigned short s_height)
+static void VGA_Load_bmp(const char *file, BITMAP *b, unsigned short s_width, unsigned short s_height, unsigned char load_pal)
 {
 	FILE *fp;
 	long long index;
@@ -419,7 +433,20 @@ static void VGA_Load_bmp(const char *file, BITMAP *b, unsigned short s_width, un
 		exit(1);
 	}
   
-	fskip(fp,num_colors*4);
+	if (load_pal == 1)
+	{
+		for(index=0;index<num_colors;index++)
+		{
+			VGA_8158_GAMEPAL[(int)(index*3+2)] = fgetc(fp) >> 2;
+			VGA_8158_GAMEPAL[(int)(index*3+1)] = fgetc(fp) >> 2;
+			VGA_8158_GAMEPAL[(int)(index*3+0)] = fgetc(fp) >> 2;
+			fgetc(fp);
+		}	
+	}
+	else
+	{
+		fskip(fp,num_colors*4);
+	}
 	
 	/* read the bitmap */
 	for(index = (b->height-1)*b->width; index >= 0;index-=b->width)

@@ -65,7 +65,7 @@ typedef struct VideoDevice {
 	void (*DrawBMP_sprite_trans)(BITMAP *bmp, short x, short, unsigned char frame);
 	void (*DrawBMP_sprite_notrans)(BITMAP *bmp, short x, short, unsigned char frame);
 	
-	void (*LoadBMP)(const char *file, BITMAP *b, unsigned short s_width, unsigned short s_height);
+	void (*LoadBMP)(const char *file, BITMAP *b, unsigned short s_width, unsigned short s_height, unsigned char load_pal);
 	
 	void (*LoadPalette)(const char *file);
 	

@@ -163,7 +163,7 @@ static void XGA_Load_Font()
 	}
 }
 
-static void XGA_Load_bmp(const char *file, BITMAP *b, unsigned short s_width, unsigned short s_height)
+static void XGA_Load_bmp(const char *file, BITMAP *b, unsigned short s_width, unsigned short s_height, unsigned char load_pal)
 {
 	FILE *fp;
 	long long index;
@@ -206,7 +206,21 @@ static void XGA_Load_bmp(const char *file, BITMAP *b, unsigned short s_width, un
 		exit(1);
 	}
   
-	fskip(fp,num_colors*4);
+	if (load_pal == 1)
+	{
+		for(index=0;index<256;index++)
+		{
+			VGA_8158_GAMEPAL[(int)(3+index*3+2)] = fgetc(fp) >> 2;
+			VGA_8158_GAMEPAL[(int)(3+index*3+1)] = fgetc(fp) >> 2;
+			VGA_8158_GAMEPAL[(int)(3+index*3+0)] = fgetc(fp) >> 2;
+			x = fgetc(fp);
+		}
+	}
+	else
+	{
+		fskip(fp,num_colors*4);
+	}	
+	
 	/* read the bitmap */
 	for(index = (b->height-1)*b->width; index >= 0;index-=b->width)
 	{

@@ -16,7 +16,7 @@
 #include <dos.h>
 #include <conio.h>
 #include <stdio.h>
-#include "sb.h"
+#include "sound.h"
 
 struct HeaderType {
   long         RIFF;      //RIFF header
@@ -236,3 +236,13 @@ void SB_Close()
 {
 	WriteDSP (0xD0);
 }
+
+
+SoundDevice SB_device = {
+	"SB driver",
+	SB_Init,
+	SB_Load,
+	SB_Play,
+	SB_Unload,
+	SB_Close
+};

@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <dos.h>
 #include <string.h>
+#include "music.h"
 
 static void* imf;
 static long imflen;
@@ -48,12 +49,12 @@ static void *imf_loadfile(const char* filename, long* length)
 	return buff;    
 }
 
-void Init_Music()
+void IMF_Init_Music(unsigned short flags)
 {
 	InstallPlayer(560);
 }
 
-unsigned char Load_Music(const char* filename)
+unsigned char IMF_Load_Music(const char* filename)
 {
 	imf = imf_loadfile(filename, &imflen);
 	if (imf)
@@ -63,21 +64,31 @@ unsigned char Load_Music(const char* filename)
 	return 0;
 }
 
-void Play_Music()
+void IMF_Play_Music()
 {
 	PlayIMF(imf, (int)imflen);
 }
 
-void Stop_Music()
+void IMF_Stop_Music()
 {
 	// Stop IMF
 	StopIMF();
 }
 
-void Close_Music()
+void IMF_Close_Music()
 {
 	// Stop IMF
 	StopIMF();
 	// Remove player interrupt service
 	RemovePlayer();	
 }
+
+MusicDevice IMF_device = {
+	"IMF driver",
+	IMF_Init_Music,
+	IMF_Load_Music,
+	IMF_Play_Music,
+	IMF_Stop_Music,
+	IMF_Close_Music
+};
+

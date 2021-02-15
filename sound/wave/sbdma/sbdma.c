@@ -15,44 +15,51 @@
 #include <malloc.h>
 #include <math.h>
 #include <mem.h>
+#include <io.h>
 
 #include <stdlib.h>
 #include <string.h>
+#ifdef DJGPP
+#include <go32.h>
+#include <dpmi.h>
 #include <sys/movedata.h>
 #include <sys/nearptr.h>
 #include <pc.h>
-#include <go32.h>
-#include <dpmi.h>
+#endif
 
-#include "sbdma.h"
+#include "sound.h"
 
-char                          Key;
-unsigned int              CBuffer; //Clear Buffer indicator
-unsigned char          *DMABuffer; //Pointer to protected mode DMA Buffer
-unsigned int                  DMA; //The DMA channel
-unsigned int                  IRQ; //The IRQ level
-unsigned int                 Base; //Sound Blaster base address, Word
+static char                          Key;
+static unsigned int              CBuffer; //Clear Buffer indicator
+static unsigned char          *DMABuffer; //Pointer to protected mode DMA Buffer
+static unsigned int                  DMA; //The DMA channel
+static unsigned int                  IRQ; //The IRQ level
+static unsigned int                 Base; //Sound Blaster base address, Word
 
+#ifdef DJGPP
 //Pointers to old and new interrupt routines
-_go32_dpmi_seginfo  OldIRQ, MyIRQ;
+static _go32_dpmi_seginfo  OldIRQ, MyIRQ;
 
 //Pointer to DOS DMA buffer
-_go32_dpmi_seginfo         DOSBuf;
-int                     DOSBufOfs;
+static _go32_dpmi_seginfo         DOSBuf;
+static int                     DOSBufOfs;
+#else
+static void interrupt (*OldIRQ)();
+#endif
 
 /****************************************************************************
 ** Checks to see if a Sound Blaster exists at a given address, returns     **
 ** true if Sound Blaster found, false if not.                              **
 ****************************************************************************/
-int ResetDSP(unsigned int Test)
+static int ResetDSP(unsigned int Test)
 {
   //Reset the DSP
-  outportb (Test + 0x6, 1);
+  outp (Test + 0x6, 1);
   delay(10);
-  outportb (Test + 0x6, 0);
+  outp (Test + 0x6, 0);
   delay(10);
   //Check if (reset was succesfull
-  if (((inportb(Test + 0xE) & 0x80) == 0x80) && (inportb(Test + 0xA) == 0xAA))
+  if (((inp(Test + 0xE) & 0x80) == 0x80) && (inp(Test + 0xA) == 0xAA))
   {
     //DSP was found
     Base = Test;
@@ -66,12 +73,12 @@ int ResetDSP(unsigned int Test)
 /****************************************************************************
 ** Send a byte to the DSP (Digital Signal Processor) on the Sound Blaster  **
 ****************************************************************************/
-void WriteDSP(unsigned char Value)
+static void WriteDSP(unsigned char Value)
 {
   //Wait for the DSP to be ready to accept data
-  while ((inportb(Base + 0xC) & 0x80) == 0x80);
+  while ((inp(Base + 0xC) & 0x80) == 0x80);
   //Send byte
-  outportb (Base + 0xC, Value);
+  outp (Base + 0xC, Value);
 }
 
 /****************************************************************************
@@ -80,25 +87,30 @@ void WriteDSP(unsigned char Value)
 ** play blocks of 8K and then generate an interrupt (which allows the      **
 ** program to clear the parts that have already been played)               **
 ****************************************************************************/
-void StartPlayBack ()
+static void StartPlayBack ()
 {
-  unsigned int  Page, OffSet;
-  unsigned char TimeConstant;
-
-  TimeConstant = (65536 - (256000000 / 11025)) >> 8;
+	unsigned int  Page, OffSet;
+	long LinearAddress;
   
   WriteDSP (0xD1);                 //DSP-command D1h - Enable speaker, required
                                    //on older SB's
   WriteDSP (0x40);                 //DSP-command 40h - Set sample frequency
-  //WriteDSP (165);                  //Write time constant
-  WriteDSP(TimeConstant);          //Write time constant
+  WriteDSP(165);          //Write time constant
 
   //Convert pointer to linear address
+#ifdef DJGPP
   Page = DOSBufOfs >> 16;          //Calculate page
   OffSet = DOSBufOfs & 0xFFFF;     //Calculate offset in the page
-  outportb (0x0A, 4 | DMA);        //Mask DMA channel
-  outportb (0x0C, 0);              //Clear byte pointer
-  outportb (0x0B, 0x58 | DMA);     //Set mode
+#else
+  //Convert pointer to linear address
+  LinearAddress = FP_SEG (DMABuffer);
+  LinearAddress = (LinearAddress << 4) + FP_OFF (DMABuffer);
+  Page = LinearAddress >> 16;      //Calculate page
+  OffSet = LinearAddress & 0xFFFF; //Calculate offset in the page
+#endif
+  outp (0x0A, 4 | DMA);        //Mask DMA channel
+  outp (0x0C, 0);              //Clear byte pointer
+  outp (0x0B, 0x58 | DMA);     //Set mode
   /*
       The mode consists of the following:
       0x58 + x = binary 01 00 10 xx
@@ -109,17 +121,17 @@ void StartPlayBack ()
                         +---------- Block mode
   */
 
-  outportb (DMA << 1, OffSet & 0xFF); //Write the offset to the DMA controller
-  outportb (DMA << 1, OffSet >> 8);
+  outp (DMA << 1, OffSet & 0xFF); //Write the offset to the DMA controller
+  outp (DMA << 1, OffSet >> 8);
 
-  if (DMA == 0) outportb (0x87, Page);
-  if (DMA == 1) outportb (0x83, Page);
-  if (DMA == 3) outportb (0x82, Page);
+  if (DMA == 0) outp (0x87, Page);
+  if (DMA == 1) outp (0x83, Page);
+  if (DMA == 3) outp (0x82, Page);
 
-  outportb ((DMA << 1) + 1, 0xFF); //Set the block length to 0x7FFF = 32 Kbyte
-  outportb ((DMA << 1) + 1, 0x7F);
+  outp ((DMA << 1) + 1, 0xFF); //Set the block length to 0x7FFF = 32 Kbyte
+  outp ((DMA << 1) + 1, 0x7F);
 
-  outportb (0x0A, DMA);            //Unmask DMA channel
+  outp (0x0A, DMA);            //Unmask DMA channel
 
   WriteDSP (0x48);                 //DSP-command 48h - Set block length
   WriteDSP (0xFF);                 //Set the block length to 0x1FFF = 8 Kbyte
@@ -130,26 +142,32 @@ void StartPlayBack ()
 /****************************************************************************
 ** Clears an 8K part of the DMA buffer                                     **
 ****************************************************************************/
-void ClearBuffer (unsigned int Buffer)
+static void ClearBuffer (unsigned int Buffer)
 {
 	char *Address;
+#ifdef DJGPP
 	//Fill an 8K block in the DMA buffer with 128's - silence
 	Address = (char *)(DMABuffer + (Buffer << 13));
 	memset (Address, 128, 8192);
 	//Copy DMA buffer to DOS memory
 	dosmemput(Address, 8192, DOSBufOfs + (Buffer << 13));
+#else
+	//Fill an 8K block in the DMA buffer with 128's - silence
+	Address = (char *)MK_FP (FP_SEG (DMABuffer), FP_OFF (DMABuffer) + (Buffer << 13));
+	memset (Address, 128, 8192);
+#endif
 }
 
 /****************************************************************************
 ** Mixes a sample with the contents of the DMA buffer                      **
 ****************************************************************************/
-void MixVoice (struct WaveData *Voice)
+static void MixVoice (struct WaveData *Voice)
 {
   unsigned int Counter, beforeOffSet, OffSet, DMAPointer;
 
   //Read DMA pointer from DMA controller
-  DMAPointer = inportb (1 + (DMA << 1));
-  DMAPointer = DMAPointer + (inportb (1 + (DMA << 1)) << 8);
+  DMAPointer = inp (1 + (DMA << 1));
+  DMAPointer = DMAPointer + (inp (1 + (DMA << 1)) << 8);
 
   /*
     DMAPointer contains amount that remains to be played.
@@ -158,6 +176,7 @@ void MixVoice (struct WaveData *Voice)
 
   DMAPointer = 0x7FFF - DMAPointer;
 
+#ifdef DJGPP
   beforeOffSet = OffSet = DMAPointer;
 
   for (Counter = 0; Counter <= Voice->SoundLength; Counter++) {
@@ -173,6 +192,15 @@ void MixVoice (struct WaveData *Voice)
     dosmemput (DMABuffer + beforeOffSet, 32768 - beforeOffSet, DOSBufOfs + beforeOffSet);
     dosmemput (DMABuffer, OffSet, DOSBufOfs);
   }
+#else
+  OffSet = DMAPointer;
+
+  for (Counter = 0; Counter <= Voice->SoundLength; Counter++) {
+    //Mix byte
+    DMABuffer [OffSet++] += Voice->Sample [Counter];
+    OffSet &= 0x7FFF; //Move on to next byte and keep it in the 32K range
+  }
+#endif
 }
 
 /****************************************************************************
@@ -180,7 +208,7 @@ void MixVoice (struct WaveData *Voice)
 ** standard 11025Hz, 8bit, mono .WAV file. It doesn't perform any error    **
 ** checking.                                                               **
 ****************************************************************************/
-void LoadVoice (struct WaveData *Voice, const char *FileName)
+static void LoadVoice (struct WaveData *Voice, const char *FileName)
 {
 	FILE *WAVFile;
 	//If it can't be opened...
@@ -208,7 +236,7 @@ void LoadVoice (struct WaveData *Voice, const char *FileName)
 /****************************************************************************
 ** Converts a wave file so it can be mixed easily                          **
 ****************************************************************************/
-void ConvertVoice (struct WaveData *Voice)
+static void ConvertVoice (struct WaveData *Voice)
 {
  unsigned int OffSet;
 
@@ -224,14 +252,23 @@ void ConvertVoice (struct WaveData *Voice)
 ** IRQ service routine - this is called when the DSP has finished playing  **
 ** a block                                                                 **
 ****************************************************************************/
-void ServiceIRQ ()
+#ifdef DJGPP
+static void ServiceIRQ ()
+#else
+static void interrupt ServiceIRQ ()
+#endif
 {
+#ifdef DJGPP
   //Relieve DSP
-  inportb (0x22E);
+  inp (0x22E);
+#else
+  //Relieve DSP
+  inp (Base + 0xE);
+#endif
   //Acknowledge hardware interrupt
-  outportb (0x20, 0x20);
+  outp (0x20, 0x20);
   //Acknowledge cascade interrupt for IRQ 2, 10 and 11
-  if (IRQ == 2 || IRQ == 10 || IRQ == 11) outportb (0xA0, 0x20);
+  if (IRQ == 2 || IRQ == 10 || IRQ == 11) outp (0xA0, 0x20);
   //Increase pointer to clear buffer and keep it in the range 0..3
   CBuffer++;
   CBuffer &= 3;
@@ -243,8 +280,9 @@ void ServiceIRQ ()
 ** This procedure allocates 32K of memory to the DMA buffer and makes sure **
 ** that no page boundary is crossed                                        **
 ****************************************************************************/
-void AssignBuffer ()
+static void AssignBuffer ()
 {
+#ifdef DJGPP
   _go32_dpmi_seginfo TempBuf; //Temporary pointer
   unsigned int  Page1, Page2; //Words
 
@@ -277,10 +315,39 @@ void AssignBuffer ()
   //Clear DMA buffers
   memset (DMABuffer, 128, 0x7FFF);
   dosmemput (DMABuffer, 32768, DOSBufOfs);
+#else
+  char *TempBuf; //Temporary pointer
+  long LinearAddress;
+  unsigned int Page1, Page2;  //Words
+
+  //Assign 32K of memory
+  TempBuf = (char *)malloc(32768);
+
+  //Calculate linear address
+  LinearAddress = FP_SEG (TempBuf);
+  LinearAddress = (LinearAddress << 4) + FP_OFF (TempBuf);
+
+  //Calculate page at start of buffer
+  Page1 = LinearAddress >> 16;
+
+  //Calculate page at end of buffer}
+  Page2 = (LinearAddress + 32767) >> 16;
+
+  //Check to see if a page boundary is crossed
+  if (Page1 != Page2) {
+    //If so, assign another part of memory to the buffer
+    DMABuffer = (char *)malloc(32768);
+    free (TempBuf);
+  } else //otherwise, use the part we've already allocated
+    DMABuffer = TempBuf;
+
+  memset (DMABuffer, 128, 0x7FFF);
+#endif
 }
 
+#ifdef DJGPP
 //Interrupt vector helpers
-void setvect (int Vector)
+static void setvect (int Vector)
 {
   //Get location of the new keyboard handler
   MyIRQ.pm_offset = (int)ServiceIRQ;
@@ -291,13 +358,14 @@ void setvect (int Vector)
   _go32_dpmi_chain_protected_mode_interrupt_vector (Vector, &MyIRQ);
 }
 
-void resetvect (int Vector)
+static void resetvect (int Vector)
 {
   //Set interrupt vector to the BIOS handler
   _go32_dpmi_set_protected_mode_interrupt_vector (Vector, &OldIRQ);
 }
+#endif
 
-void SB_Init()
+static void SBDMA_Init()
 {
 	unsigned char Temp;
 
@@ -323,19 +391,27 @@ void SB_Init()
 	AssignBuffer ();
 
 	//Save old/set new IRQ vector
+	#ifdef DJGPP
 	if (IRQ == 2 || IRQ == 10 || IRQ == 11) {
 		if (IRQ == 2) setvect (0x71);
 		if (IRQ == 10) setvect (0x72);
 		if (IRQ == 11) setvect (0x73);
 	} else setvect (8 + IRQ);
+	#else
+	if (IRQ == 2 || IRQ == 10 || IRQ == 11) {
+		if (IRQ == 2) _dos_setvect (0x71,  ServiceIRQ);
+		if (IRQ == 10) _dos_setvect (0x72,  ServiceIRQ);
+		if (IRQ == 11) _dos_setvect (0x73,  ServiceIRQ);
+	} else _dos_setvect (8 + IRQ,  ServiceIRQ);
+	#endif
 
 	//Enable IRQ
 	if (IRQ == 2 || IRQ == 10 || IRQ == 11) {
-		if (IRQ == 2) outportb (0xA1, inportb (0xA1) & 253);
-		if (IRQ == 10) outportb (0xA1, inportb (0xA1) & 251);
-		if (IRQ == 11) outportb (0xA1, inportb (0xA1) & 247);
-		outportb (0x21, inportb (0x21) & 251);
-	} else outportb (0x21, inportb (0x21) & !(1 << IRQ));
+		if (IRQ == 2) outp (0xA1, inp (0xA1) & 253);
+		if (IRQ == 10) outp (0xA1, inp (0xA1) & 251);
+		if (IRQ == 11) outp (0xA1, inp (0xA1) & 247);
+		outp (0x21, inp (0x21) & 251);
+	} else outp (0x21, inp (0x21) & !(1 << IRQ));
 
 	//Set clear buffer to last buffer
 	CBuffer = 3;
@@ -344,18 +420,18 @@ void SB_Init()
 	StartPlayBack ();
 }
 
-void SB_Load(const char* WaveFile, struct WaveData *vc)
+static void SBDMA_Load(const char* WaveFile, struct WaveData *vc)
 {
 	LoadVoice (vc, WaveFile);
 	ConvertVoice (vc);
 }
 
-void SB_Play(struct WaveData *vc)
+static void SBDMA_Play(struct WaveData *vc)
 {
 	MixVoice (vc);
 }
 
-void SB_Unload(struct WaveData *vc)
+static void SBDMA_Unload(struct WaveData *vc)
 {
 	if (vc->Sample)
 	{
@@ -363,7 +439,7 @@ void SB_Unload(struct WaveData *vc)
 	}
 }
 
-void SB_Close()
+static void SBDMA_Close()
 {
 	//Stops DMA-transfer
 	WriteDSP (0xD0);
@@ -377,17 +453,35 @@ void SB_Close()
 	}
 
 	//Free interrupt vectors used to service IRQs
+	#ifdef DJGPP
 	if (IRQ == 2 || IRQ == 10 || IRQ == 11) {
 		if (IRQ == 2) resetvect (0x71);
 		if (IRQ == 10) resetvect (0x72);
 		if (IRQ == 11) resetvect (0x73);
 	} else resetvect (8 + IRQ);
+	#else
+	if (IRQ == 2 || IRQ == 10 || IRQ == 11) {
+		if (IRQ == 2) _dos_setvect (0x71, OldIRQ);
+		if (IRQ == 10) _dos_setvect (0x72, OldIRQ);
+		if (IRQ == 11) _dos_setvect (0x73, OldIRQ);
+	} else _dos_setvect (8 + IRQ, OldIRQ);
+	#endif
 
 	//Mask IRQs
 	if (IRQ == 2 || IRQ == 10 || IRQ == 11) {
-		if (IRQ == 2) outportb (0xA1, inportb (0xA1) | 2);
-		if (IRQ == 10) outportb (0xA1, inportb (0xA1) | 4);
-		if (IRQ == 11) outportb (0xA1, inportb (0xA1) | 8);
-		outportb (0x21, inportb (0x21) | 4);
-	} else outportb (0x21, inportb (0x21) | (1 << IRQ));
+		if (IRQ == 2) outp (0xA1, inp (0xA1) | 2);
+		if (IRQ == 10) outp (0xA1, inp (0xA1) | 4);
+		if (IRQ == 11) outp (0xA1, inp (0xA1) | 8);
+		outp (0x21, inp (0x21) | 4);
+	} else outp (0x21, inp (0x21) | (1 << IRQ));
 }
+
+
+SoundDevice SBDMA_device = {
+	"SBDMA driver",
+	SBDMA_Init,
+	SBDMA_Load,
+	SBDMA_Play,
+	SBDMA_Unload,
+	SBDMA_Close
+};
