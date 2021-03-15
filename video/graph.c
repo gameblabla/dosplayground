@@ -6,7 +6,6 @@
 #include <time.h>
 
 #include "generic.h"
-#include "generic_io.h"
 #include "graph.h"
 
 byte VGA_8158_GAMEPAL[769];

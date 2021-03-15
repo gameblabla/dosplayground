@@ -4,9 +4,8 @@
 #include <conio.h>
 #include <malloc.h>
 #include <unistd.h>
-
 #include <stdint.h>
-
+#include <libgen.h>
 #include "generic.h"
 #include "generic_io.h"
 #include "graph.h"
@@ -25,6 +24,19 @@ static word visual_page = 0;
 
 // For non planar mode only
 static byte* doublebuffer;
+
+static char *removestr(char* myStr)
+{
+    char *retStr;
+    char *lastExt;
+    if (myStr == NULL) return NULL;
+    if ((retStr = malloc (strlen (myStr) + 1)) == NULL) return NULL;
+    strcpy (retStr, myStr);
+    lastExt = strrchr (retStr, '.');
+    if (lastExt != NULL)
+        *lastExt = '\0';
+    return retStr;
+}
 
 /* These 3 funtions are for setting the VGA screen mode*/
 
@@ -309,6 +321,14 @@ static void VGA_Draw_sprite_normal_notrans(BITMAP *bmp, short x, short y, unsign
 	}
 }
 
+static void VGA_Set_palette()
+{
+  unsigned short i;
+  outp(PALETTE_INDEX,0);	/* tell the VGA that palette data is coming. */
+  for(i=0;i<256*3;i++)
+	outp(PALETTE_DATA,VGA_8158_GAMEPAL[i]);    /* write the data */
+}
+
 static void VGA_Load_static_bmp_planar(const char *file, BITMAP *b, unsigned short s_width, unsigned short s_height, unsigned char load_pal)
 {
 	FILE *fp;
@@ -350,7 +370,11 @@ static void VGA_Load_static_bmp_planar(const char *file, BITMAP *b, unsigned sho
 	/* try to allocate memory */
 	for(plane=0;plane<4;plane++)
 	{
+		#ifndef DJGPP
+		if ((b->pdata[plane] = (byte far *) _fmalloc((word)(size>>2))) == NULL)
+		#else
 		if ((b->pdata[plane] = (byte *) malloc((word)(size>>2))) == NULL)
+		#endif
 		{
 			fclose(fp);
 			printf("Error allocating memory for file %s.\n", file);
@@ -390,124 +414,70 @@ static void VGA_Load_static_bmp_planar(const char *file, BITMAP *b, unsigned sho
 	b->sprite_height = s_height;
 }
 
-static void VGA_Load_bmp(const char *file, BITMAP *b, unsigned short s_width, unsigned short s_height, unsigned char load_pal)
+static void VGA_Load_SIF(const char *file, BITMAP *b, unsigned short s_width, unsigned short s_height, unsigned char load_pal)
 {
-	FILE *fp;
-	long long index;
-	word num_colors;
-	long x;
-  
-	/* open the file */
-	if ((fp = fopen(file,"rb")) == NULL)
+	int fd;
+	char* mem = NULL;
+	uint32_t fsz;
+	FILE* fp;
+	uint16_t in;
+	uint16_t index;
+	char str[128];
+
+	fp = fopen(file, "rb");
+	
+	// We determine the filesize this way by using the return value of _dos_seek
+	fseek(fp, 0, SEEK_END);
+	fsz = ftell(fp);
+	fseek(fp, 0, SEEK_SET);
+	
+	fread (&b->width, 1, sizeof(uint16_t), fp);
+	fread (&b->height, 1, sizeof(uint16_t), fp);
+	fread (&b->sprite_width, 1, sizeof(uint16_t), fp);
+	fread (&b->sprite_height, 1, sizeof(uint16_t), fp);
+	
+	// Jump right after the end of the header
+	fseek(fp, BITMAP_HEADER_SIZE, SEEK_SET);
+
+	//switch(bmp.encoding)
 	{
-		printf("Error opening file %s.\n",file);
-		exit(1);
-	}
-  
-	/* check to see if it is a valid bitmap file */
-	if (fgetc(fp)!='B' || fgetc(fp)!='M')
-	{
-		fclose(fp);
-		printf("%s is not a bitmap file.\n",file);
-		exit(1);
+		//default:
+			b->data = malloc((b->width * b->height));
+			fread (b->data, 1, (b->width * b->height), fp);
+		//break;
 	}
 	
-	/* read in the width and height of the image, and the
-	number of colors used; ignore the rest */
-	fskip(fp,16);
-	fread(&b->width, sizeof(word), 1, fp);
-	fskip(fp,2);
-	fread(&b->height,sizeof(word), 1, fp);
-	fskip(fp,22);
-	fread(&num_colors,sizeof(word), 1, fp);
-	fskip(fp,6);
-
-	/* assume we are working with an 8-bit file */
-	if (num_colors==0) num_colors=256;
-
-	/* try to allocate memory */
-	if ((b->data = (byte *) malloc((word)(b->width*b->height))) == NULL)
-	{
-		fclose(fp);
-		printf("Error allocating memory for file %s.\n",file);
-		exit(1);
-	}
-  
-	if (load_pal == 1)
-	{
-		for(index=0;index<num_colors;index++)
-		{
-			VGA_8158_GAMEPAL[(int)(index*3+2)] = fgetc(fp) >> 2;
-			VGA_8158_GAMEPAL[(int)(index*3+1)] = fgetc(fp) >> 2;
-			VGA_8158_GAMEPAL[(int)(index*3+0)] = fgetc(fp) >> 2;
-			fgetc(fp);
-		}	
-	}
-	else
-	{
-		fskip(fp,num_colors*4);
-	}
-	
-	/* read the bitmap */
-	for(index = (b->height-1)*b->width; index >= 0;index-=b->width)
-	{
-		for(x = 0; x < b->width; x++)
-		{
-			b->data[(int)((index+x))]=(byte)fgetc(fp);
-		}
-	}
-	fclose(fp);
-  
 	if (s_width == 0) s_width = b->width;
 	if (s_height == 0) s_height = b->height;
   
 	b->sprite_width = s_width;
 	b->sprite_height = s_height;
+
+	fclose(fp);
+	
+	if (load_pal == 1)
+	{
+		snprintf(str, sizeof(str), "%s.PAL", removestr(basename(file)));
+		VGA_Load_palette(str);
+	}
 }
 
 static void VGA_Load_palette(const char *file)
 {
 	FILE *fp;
 	long index;
-	word num_colors = 256;
-  
-	/* open the file */
-	if ((fp = fopen(file,"rb")) == NULL)
-	{
-		printf("Error opening file %s.\n",file);
-		exit(1);
-	}
-	/* check to see if it is a valid bitmap file */
-	if (fgetc(fp)!='B' || fgetc(fp)!='M')
-	{
-		fclose(fp);
-		printf("%s is not a bitmap file.\n",file);
-		exit(1);
-	}
-
-	fskip(fp,52);
-
-	/* assume we are working with an 8-bit file */
-	if (num_colors==0) num_colors=256;
-  
-  /* read the palette information */
-	for(index=0;index<num_colors;index++)
-	{
-		VGA_8158_GAMEPAL[(int)(index*3+2)] = fgetc(fp) >> 2;
-		VGA_8158_GAMEPAL[(int)(index*3+1)] = fgetc(fp) >> 2;
-		VGA_8158_GAMEPAL[(int)(index*3+0)] = fgetc(fp) >> 2;
-		fgetc(fp);
-	}
+	uint16_t in;
+	char str[128];
 	
+	fp = fopen(file, "rb");
+	for(index=0;index<256;index++)
+	{
+		VGA_8158_GAMEPAL[(index*3)+0] = fgetc(fp) >> 2;
+		VGA_8158_GAMEPAL[(index*3)+1] = fgetc(fp) >> 2;
+		VGA_8158_GAMEPAL[(index*3)+2] = fgetc(fp) >> 2;
+	}
+	VGA_Set_palette();
 	fclose(fp);
-}
-
-static void VGA_Set_palette()
-{
-  unsigned short i;
-  outp(PALETTE_INDEX,0);	/* tell the VGA that palette data is coming. */
-  for(i=0;i<256*3;i++)
-	outp(PALETTE_DATA,VGA_8158_GAMEPAL[i]);    /* write the data */
 }
 
 static void VGA_Wait_for_retrace(void) 
@@ -527,7 +497,11 @@ static void VGA_Free_bmp_planar(BITMAP bmp)
 	unsigned char plane;
 	for(plane=0;plane<4;plane++)
 	{
+		#ifndef DJGPP
+		_ffree(bmp.pdata[plane]);
+		#else
 		free(bmp.pdata[plane]);
+		#endif
 	}
 }
 
@@ -637,7 +611,7 @@ VideoDevice Normal_VGA = {
 	VGA_Draw_static_bitmap_normal,
 	VGA_Draw_sprite_normal_trans,
 	VGA_Draw_sprite_normal_notrans,
-	VGA_Load_bmp,
+	VGA_Load_SIF,
 	VGA_Load_palette,
 	VGA_Set_palette,
 	VGA_Free_bmp,

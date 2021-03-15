@@ -1,0 +1,75 @@
+BMP 565 to SIF
+
+This is a simple BMP 565 to GRB555 converter for the Sharp X68000.
+
+==========
+How to use
+==========
+
+convert_tool.elf in.bmp/in.fc8 out.raw bitmap_width bitmap_height sprite_width sprite_height noheader
+		
+in.bmp/in.fc8 : Input image to convert. It must be either a BMP RGB565 with no color information appended (GIMP does it by default, change it in the options upon saving the image) or a RAW format that is compressed.
+out.raw	: Output file. This is where the final converted data is pushed to.
+
+bitmap_width : Total size width of the image. This is especially useful if you are using a compressed format.
+bitmap_height : Total size height of the image.
+
+sprite_width : Size of sprite in width. This is used for displaying sprites and cropping the necesarry portion. Make sure it is a vertical image strip !
+sprite_height : Size of sprite in height.
+
+noheader : Tells the program to just convert the BMP image as a raw GRB555. Use this if you want to later process this with FC8, LZ4W, Aplib/Apultra or more.
+
+For static background images, just enter the same value for sprite_width and bitmap_width.
+
+==========
+Details
+==========
+By default, it appends a header to it.
+The header is as below :
+Width of bitmap. 2 bytes (Big endian ordering)
+Height of bitmap. 2 bytes (Big endian ordering)
+Sprite width of sprite within bitmap. 2 bytes (Big endian ordering)
+Sprite height of sprite within bitmap. 2 bytes (Big endian ordering)
+Bitdepth. 1 byte
+Encoder/compressor used for the image. 1 byte
+
+Stubs. 5 bytes (If used in the used, they will be in Big endian ordering but for now, they can be ignored)
+
+It's no coincidence that the header is 16 bytes as it was done mostly for alignment purpose.
+
+The sprite descriptors are used for cropping the bitmap when displaying large sprites that can't be used on the hardware.
+
+The bitdepth descriptor is for informing the program of the bitdepth of the source image
+so it doesn't try to load more or less and processes it correctly.
+
+The compressor descriptor can inform the program of the encoder that was used to compress the image.
+If set to 0, then the image is assumed to be an uncompressed GRB555, which is the Sharp X68000 format.
+Here's a list :
+0 : No compression (raw GRB555 buffer)
+1 : FC8 (Good middleground compression algo for speed and size)
+2 : LZ4W (SGDK Stef's lz4 based compression algorithm used on the Sega Genesis. Very fast decompression but worst compresser of all.)
+3 : nrv2s (UPX compression algo. Is a middle ground between aplib and fc8)
+4 : LZ4 (Standard LZ4. Better than LZ4W but worse than the other ones)
+5 : zlib/inflate (Decent compression but bad speed)
+6 : Aplib (Best compresion but worst decoding speed)
+7 : PackFire (Similar to aplib but it's worse in both ways)
+
+There might be more additions to these in the future but for now, only FC8, no compression, LZ4W, Aplib and NRV2S are currently implemented.
+
+In my tests, LZ4W is only a second faster at decoding a 512x512 GRB555 image than FC8.
+Aplib takes quite a bit of time, so add 3 seconds on top of what LZ4W needs to decode an image.
+
+As for which compression you should use, is a matter of strategy.
+Remember that disk access time can be slow so the smaller the file is, the faster it can load from the floppy drive.
+Try LZ4W for pictures with little details (such as uncompressed anime pictures) and FC8 if you want to compress a detailed image
+but need faster decoding speed than Aplib.
+Use Aplib if decoding speed does not matter as much as filesize.
+
+
+========
+Use SIF
+========
+
+Please take a look at gfx.c in order to get an idea of how to process the images.
+Note that if you want to process this format on another platform, you will need to byte swap it
+as the image format itself is big endian (except for the compression algos, in which case they are untouched).

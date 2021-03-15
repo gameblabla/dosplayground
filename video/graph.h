@@ -44,12 +44,14 @@
 
 #define NUM_COLORS          256       /* number of colors in mode 0x13 */
 
+#define BITMAP_HEADER_SIZE 16
+
 typedef struct tagBITMAP              /* the structure for a bitmap. */
 {
   word width;
   word height;
-  byte __far *data;
-  byte __far *pdata[4];
+  byte far *data;
+  byte far *pdata[4];
   word sprite_width;
   word sprite_height;
 } BITMAP;
@@ -85,6 +87,9 @@ typedef struct VideoDevice {
 extern VideoDevice Planar_VGA;
 extern VideoDevice Normal_VGA;
 extern VideoDevice Normal_8514;
+#ifdef DJGPP
+extern VideoDevice Normal_PC9821_PGC;
+#endif
 
 extern unsigned char *hold_screen;
 
