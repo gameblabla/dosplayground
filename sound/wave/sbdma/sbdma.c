@@ -75,10 +75,17 @@ static int ResetDSP(unsigned int Test)
 ****************************************************************************/
 static void WriteDSP(unsigned char Value)
 {
-  //Wait for the DSP to be ready to accept data
-  while ((inp(Base + 0xC) & 0x80) == 0x80);
-  //Send byte
-  outp (Base + 0xC, Value);
+	//Wait for the DSP to be ready to accept data
+	// Thanks Geri for fix
+	// "If the sb freezes, the system will not freeze"
+	int hibaw=0;
+    while((inp(portb+0xC)&0x80)==0x80)
+    {
+		hibaw++;
+		if(hibaw>(256256256*1)) break;
+    }
+	//Send byte
+	outp (Base + 0xC, Value);
 }
 
 /****************************************************************************
