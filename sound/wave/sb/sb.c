@@ -65,7 +65,7 @@ void WriteDSP(unsigned char Value)
 	// Thanks Geri for fix
 	// "If the sb freezes, the system will not freeze"
 	int hibaw=0;
-    while((inp(portb+0xC)&0x80)==0x80)
+    while((inp(Base+0xC)&0x80)==0x80)
     {
 		hibaw++;
 		if(hibaw>65534) break;
