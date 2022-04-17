@@ -82,7 +82,7 @@ static void WriteDSP(unsigned char Value)
     while((inp(portb+0xC)&0x80)==0x80)
     {
 		hibaw++;
-		if(hibaw>(256256256*1)) break;
+		if(hibaw>65534) break;
     }
 	//Send byte
 	outp (Base + 0xC, Value);
