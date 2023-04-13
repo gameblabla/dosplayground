@@ -2,6 +2,8 @@
 #ifndef _GEN_GRAPH_
 #define _GEN_GRAPH_
 
+#include <stdint.h>
+
 #define VIDEO_INT           0x10      /* the BIOS video interrupt. */
 #define SET_MODE            0x00      /* BIOS func to set the video mode. */
 #define MCGA_256_COLOR_MODE  0x13      /* use to set 256-color mode. */
@@ -48,13 +50,18 @@
 
 typedef struct tagBITMAP              /* the structure for a bitmap. */
 {
-  word width;
-  word height;
-  byte far *data;
-  byte far *pdata[4];
-  word sprite_width;
-  word sprite_height;
+  uint16_t width;
+  uint16_t height;
+  uint8_t far *data;
+  uint8_t far *pdata[4];
+  uint16_t sprite_width;
+  uint16_t sprite_height;
+  uint8_t bytespp;
+  uint8_t encoding;
 } BITMAP;
+
+#define LZSA2_COMPRESSION_ID 5
+#define APLIB_COMPRESSION_ID 6
 
 typedef struct VideoDevice {
 	/* * * */
@@ -63,7 +70,7 @@ typedef struct VideoDevice {
 
 	void (*SetVideoMode)(unsigned short width, unsigned short height, unsigned short flags, int argc, char** argv);
 
-	void (*DrawBMP_static)(BITMAP *bmp, short x, short);
+	void (*DrawBMP_static)(BITMAP *bmp, short x, short y, unsigned long offset);
 	void (*DrawBMP_sprite_trans)(BITMAP *bmp, short x, short, unsigned char frame);
 	void (*DrawBMP_sprite_notrans)(BITMAP *bmp, short x, short, unsigned char frame);
 	

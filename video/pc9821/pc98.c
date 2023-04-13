@@ -1,5 +1,3 @@
-//#ifdef DJGPP
-
 #include <stdlib.h>
 #include <string.h>
 #include <dos.h>
@@ -11,11 +9,19 @@
 #include <go32.h>
 #include <dpmi.h>
 #include <sys/farptr.h>
- #endif
+#endif
  
 #include "generic.h"
 #include "graph.h"
 #include "pc98.h"
+
+#ifdef DJGPP
+// Doing so greatly reduces size
+#include <crt0.h>
+char **__crt0_glob_function (char *arg) { return 0; }
+void   __crt0_load_environment_file (char *progname) { }
+void   __crt0_setup_arguments (void) { }
+#endif
 
 static int pegc_fb_location = PEGC_FB_LOCATION_LOW;
 #ifdef DJGPP
@@ -27,6 +33,9 @@ static unsigned long SCREEN_SIZE;
 static unsigned short quarter_scr;
 
 static unsigned char doublebuffer[(GFX_ROW_SIZE * GFX_COL_SIZE)];
+
+extern uint32_t apl_decompress(const void *Source, void *Destination);
+
 
 static char *removestr(char* myStr)
 {
@@ -161,9 +170,9 @@ static void PC9821_SetVideo(unsigned short width, unsigned short height, unsigne
 }
 
 
-static void PC9821_Draw_static_bitmap_normal(BITMAP *bmp, short x, short y)
+static void PC9821_Draw_static_bitmap_normal(BITMAP *bmp, short x, short y, unsigned long offset)
 {
-	memcpy(doublebuffer, (byte far*) bmp->data, (bmp->width*bmp->height));
+	memcpy(doublebuffer, (byte far*) bmp->data + offset, (bmp->width*bmp->height));
 }
 
 static void PC9821_Draw_sprite_normal_trans(BITMAP *bmp, short x, short y, unsigned char frame)
@@ -216,56 +225,68 @@ static void PC9821_Set_palette()
 
 static void PC9821_Load_palette(const char *file)
 {
-	FILE *fp;
-	uint16_t index;
-	
-	fp = fopen(file, "rb");
-	for(index=0;index<256;index++)
-	{
-		VGA_8158_GAMEPAL[(index*3)+0] = fgetc(fp);
-		VGA_8158_GAMEPAL[(index*3)+1] = fgetc(fp);
-		VGA_8158_GAMEPAL[(index*3)+2] = fgetc(fp);
-	}
-	PC9821_Set_palette();
-	fclose(fp);
+	int fd;
+	unsigned totalsize;
+	_dos_open(file, O_RDONLY, &fd);
+	_dos_read(fd, VGA_8158_GAMEPAL, sizeof(VGA_8158_GAMEPAL), &totalsize);
+	_dos_close(fd);
 }
 
 static void PC9821_Load_SIF(const char *file, BITMAP *b, unsigned short s_width, unsigned short s_height, unsigned char load_pal)
 {
-	FILE* fp;
-	char str[128];
+    int fd;
+    char str[32];
+    unsigned char* temp_mem;
+    unsigned totalsize;
 
-	fp = fopen(file, "rb");
-	
-	fread (&b->width, 1, sizeof(uint16_t), fp);
-	fread (&b->height, 1, sizeof(uint16_t), fp);
-	fread (&b->sprite_width, 1, sizeof(uint16_t), fp);
-	fread (&b->sprite_height, 1, sizeof(uint16_t), fp);
-	
-	// Jump right after the end of the header
-	fseek(fp, BITMAP_HEADER_SIZE, SEEK_SET);
+    _dos_open(file, O_RDONLY, &fd);
 
-	//switch(bmp.encoding)
-	{
-		//default:
-			b->data = malloc((b->width * b->height));
-			fread (b->data, 1, (b->width * b->height), fp);
-		//break;
-	}
-	
-	if (s_width == 0) s_width = b->width;
-	if (s_height == 0) s_height = b->height;
-  
-	b->sprite_width = s_width;
-	b->sprite_height = s_height;
+    _dos_read(fd, &b->width, sizeof(uint16_t), &totalsize);
+    _dos_read(fd, &b->height, sizeof(uint16_t), &totalsize);
+    _dos_read(fd, &b->sprite_width, sizeof(uint16_t), &totalsize);
+    _dos_read(fd, &b->sprite_height, sizeof(uint16_t), &totalsize);
 
-	fclose(fp);
-	
-	if (load_pal == 1)
-	{
-		sprintf(str, "%s.PAL", removestr(basename(file)));
-		PC9821_Load_palette(str);
-	}
+    _dos_read(fd, (char*)&b->bytespp, sizeof(uint8_t), &totalsize);
+    _dos_read(fd, (char*)&b->encoding, sizeof(uint8_t), &totalsize);
+
+#ifdef DJGPP
+   	lseek (fd, BITMAP_HEADER_SIZE, SEEK_SET);
+#else
+	_dos_seek (fd, BITMAP_HEADER_SIZE, SEEK_SET);
+#endif
+
+    switch(b->encoding)
+    {
+        default:
+            b->data = malloc((b->width * b->height));
+            _dos_read(fd, b->data, (b->width * b->height), &totalsize);
+        break;
+        case APLIB_COMPRESSION_ID:
+            temp_mem = malloc((b->width * b->height));
+            b->data = malloc((b->width * b->height));
+
+            _dos_read(fd, temp_mem, (b->width * b->height), &totalsize);
+
+            apl_decompress(temp_mem,b->data);
+
+            free(temp_mem);
+        break;
+    }
+
+    if (s_width == 0) s_width = b->width;
+    if (s_height == 0) s_height = b->height;
+
+    b->sprite_width = s_width;
+    b->sprite_height = s_height;
+
+    _dos_close(fd);
+
+    if (load_pal == 1)
+    {
+        strcpy(str, removestr(basename(file)));
+        strcat(str, ".PAL");
+        PC9821_Load_palette(str);
+    }
 }
 
 static void PC9821_Wait_for_retrace(void) 
@@ -296,7 +317,7 @@ static void PC9821_Flip()
 	// Copy a buffer of GFX_ROWS * GFX_COLS bytes to
 	// the active VRAM framebuffer for display.
 	#ifdef DJGPP
-	movedata(_my_ds(), doublebuffer, vram_dpmi_selector, 0, (GFX_ROWS * GFX_COLS));
+	movedata(_my_ds(), (unsigned)doublebuffer, vram_dpmi_selector, 0, (GFX_ROWS * GFX_COLS));
 	#else
 	memcmy(pegc_fb_location, doublebuffer, GFX_ROWS * GFX_COLS);
 	#endif

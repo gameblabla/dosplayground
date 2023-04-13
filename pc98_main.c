@@ -12,7 +12,7 @@
 
 //#include "snd.h"
 #include "music.h"
-
+#include "sound.h"
 #include "generic.h"
 #include "graph.h"
 
@@ -20,14 +20,17 @@
 BITMAP bmp[2];
 short y = 0, x = 0;
 
-VideoDevice mainvideo;
+struct WaveData *Voice;
 
+VideoDevice mainvideo;
+MusicDevice mainmusic;
+SoundDevice mainsound;
 /*
-	Z = 44
-	X = 45
-	C = 46
-	Enter/Return = 0x1C
-	Escape = 0x1
+	PC-98 version
+	Run
+	pmd86
+	p86drv /16
+	before running this
 */
 
 int main(int argc,char **argv) 
@@ -44,25 +47,44 @@ int main(int argc,char **argv)
 	/*
 	 * IMF_device
 	 * MIDI_device
+	 * PMD_Device
 	*/
-	//mainmusic = IMF_device;
+	mainmusic = PMD_device;
+	
+	mainmusic.Init_Music(0);
+	if (mainmusic.Load_Music("MUSIC.M", 4249) == 0)
+	{
+		printf("Can't load music\n");
+		return 0;
+	}
+	mainmusic.Play_Music();
+	
+	printf("Play Music\n");
 	
 	/*
 	 * SB_device
 	 * SBDMA_device
+	 * PMDPCM_device
 	*/
-	//mainsound = SBDMA_device;
+	mainsound = PMDPCM_device;
+	
+	mainsound.Sound_Init();
+	if (mainsound.Sound_Load("GAME.P86", Voice, 0) == 0)
+	{
+		printf("Can't load sound effects\n");
+		return 0;
+	}
+	mainsound.Sound_Play(Voice, 0);
 	
 	mainvideo.SetVideoMode(640, 400, 0, argc, argv);
 	mainvideo.LoadBMP("DEMO.SIF", &bmp[0], 0, 0, 1);
 	mainvideo.SetPalette();
 		
 	//input = createInputManager();
-	
 
 	while (!done) 
 	{
-		mainvideo.DrawBMP_static(&bmp[0], 0, 0);
+		mainvideo.DrawBMP_static(&bmp[0], 0, 0, 0);
 
 		/*if (inputGetArrow(input, ArrowUp) == 1) 
 		{

@@ -1,0 +1,23 @@
+CC = i386-pc-msdosdjgpp-gcc
+CFLAGS = -Wall -I. -Isound -Os -fomit-frame-pointer -fdata-sections -ffunction-sections -march=i386 -mtune=i386 -Iinclude
+CFLAGS += -I./generic -I./graphics -I. -I./graphics/vga -I./input/dos -Isound/music -Ivideo/pc9821 -Ivideo -Isound/wave
+LDFLAGS = -Wl,--as-needed -Wl,--gc-sections -flto -s -nostdinc
+
+OUTPUT = GAME.exe
+
+SOURCES =  video/graph.c generic/generic.c  \
+video/pc9821/pc98.c input/pc98/input.c ./pc98_main.c sound/wave/pmd/pmdpcm.c sound/music/pmd/music_pmd.c
+OBJS = ${SOURCES:.c=.o}
+
+all: asm ${OUTPUT}
+
+${OUTPUT}:${OBJS}
+	${CC} -o ${OUTPUT} ${OBJS} aplib.o ${CFLAGS} ${LDFLAGS} 
+	i386-pc-msdosdjgpp-strip --strip-all ${OUTPUT}
+	
+asm:
+	nasm -f coff decomp/aplib.asm -o aplib.o
+	
+clean:
+	rm $(OBJS) aplib.o
+	rm ${OUTPUT}

@@ -16,52 +16,29 @@ extern void StopIMF();
 extern int GetPosIMF();
 extern int GetLoopIMF();
 
-static void *imf_loadfile(const char* filename, long* length) 
-{
-	// Very simple file loader routine
-	void* buff;
-	long size;
-	FILE* fp;
-	
-	//printf("Opening file %s...\n", filename);
-	fp = fopen(filename, "rb");
-	
-	if (!fp) {
-		//printf("Cannot load %s!\n", filename);
-		return NULL;
-	}
-	
-	fseek(fp, 0, SEEK_END);
-	size = ftell(fp);
-	fseek(fp, 0, SEEK_SET);
-	
-	//printf("Loading %u bytes...\n", size);
-	
-	buff = malloc(size);
-	fread(buff, 1, size, fp);
-
-	fclose(fp);
-	
-	if ( length ) {
-		*length = size;
-	}		
-
-	return buff;    
-}
-
 void IMF_Init_Music(unsigned short flags)
 {
 	InstallPlayer(560);
 }
 
-unsigned char IMF_Load_Music(const char* filename)
+unsigned char IMF_Load_Music(const char* filename, unsigned long size)
 {
-	imf = imf_loadfile(filename, &imflen);
+	int fd;
+	
 	if (imf)
 	{
-		return 1;
+		free(imf);
+		imf = NULL;
 	}
-	return 0;
+	
+	imf = malloc(size);
+	if (!imf) return 0;
+
+	_dos_open(filename, O_RDONLY, &fd);
+	_dos_read(fd, (char*)&imf, size, &imflen);
+	_dos_close(fd);
+	
+	return 1;
 }
 
 void IMF_Play_Music()

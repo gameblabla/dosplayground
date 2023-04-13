@@ -8,7 +8,7 @@
 #include "generic.h"
 #include "graph.h"
 
-byte VGA_8158_GAMEPAL[769];
+uint8_t VGA_8158_GAMEPAL[769];
 unsigned char *hold_screen;
 
 /**************************************************************************
