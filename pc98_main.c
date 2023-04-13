@@ -71,8 +71,7 @@ int main(int argc,char **argv)
 	mainsound.Sound_Init();
 	if (mainsound.Sound_Load("GAME.P86", Voice, 0) == 0)
 	{
-		printf("Can't load sound effects\n");
-		return 0;
+		printf("Not using P86 driver\n");
 	}
 	mainsound.Sound_Play(Voice, 0);
 	

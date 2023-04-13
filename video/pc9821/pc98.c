@@ -5,15 +5,19 @@
 #include <malloc.h>
 #include <unistd.h>
 #include <stdint.h>
+#include <fcntl.h>
 #ifdef DJGPP
 #include <go32.h>
 #include <dpmi.h>
 #include <sys/farptr.h>
 #endif
  
-#include "generic.h"
 #include "graph.h"
 #include "pc98.h"
+#include "gdc.h"
+
+uint8_t palette_pc9821[769];
+extern uint16_t screen_width, screen_height;
 
 #ifdef DJGPP
 // Doing so greatly reduces size
@@ -32,10 +36,20 @@ static int vram_dpmi_selector;	// Memory region selector handle
 static unsigned long SCREEN_SIZE;
 static unsigned short quarter_scr;
 
-static unsigned char doublebuffer[(GFX_ROW_SIZE * GFX_COL_SIZE)];
+static unsigned char* doublebuffer;
 
 extern uint32_t apl_decompress(const void *Source, void *Destination);
 
+#ifdef DJGPP
+#define OUTPORT_DOS outportb
+#define INPORT_DOS inportb
+#else
+#define OUTPORT_DOS _outp
+#define INPORT_DOS _inp
+#endif
+
+#define ENABLE_NEAR() __djgpp_nearptr_enable();
+#define DISABLE_NEAR() __djgpp_nearptr_disable();
 
 static char *removestr(char* myStr)
 {
@@ -52,10 +66,10 @@ static char *removestr(char* myStr)
 
 static void pal_Set(uint16_t idx, uint8_t r, uint8_t g, uint8_t b)
 {
-	outportb(PEGC_PALLETE_SEL_ADDR, idx);
-	outportb(PEGC_RED_ADDR, r);
-	outportb(PEGC_GREEN_ADDR, g);
-	outportb(PEGC_BLUE_ADDR, b);
+	OUTPORT_DOS(PEGC_PALLETE_SEL_ADDR, idx);
+	OUTPORT_DOS(PEGC_RED_ADDR, r);
+	OUTPORT_DOS(PEGC_GREEN_ADDR, g);
+	OUTPORT_DOS(PEGC_BLUE_ADDR, b);
 	return;
 }
 
@@ -63,7 +77,7 @@ static int_fast8_t gfx_HasMemoryHole()
 {
 	// Checks if the memory hole is set at 16MB to enable us to set the VRAM framebuffer
 	uint_fast8_t x;
-	x = inportb(MEMORY_HOLE_CHECK_ADDR);
+	x = INPORT_DOS(MEMORY_HOLE_CHECK_ADDR);
 
 	if (x & 0x04)
 	{
@@ -94,51 +108,86 @@ static int_fast8_t gfx_DPMI()
 	vram_dpmi.size    = PEGC_FB_SIZE;
 	
 	if (__dpmi_physical_address_mapping(&vram_dpmi) != 0){
+		__djgpp_nearptr_disable();
 		return -1;
 	}
 	vram_dpmi_selector = __dpmi_allocate_ldt_descriptors(1);
 	if (vram_dpmi_selector < 0){
 		__dpmi_free_physical_address_mapping(&vram_dpmi);
+		__djgpp_nearptr_disable();
 		return -1;
 	}
 	__dpmi_set_segment_base_address(vram_dpmi_selector, vram_dpmi.address);
 	__dpmi_set_segment_limit(vram_dpmi_selector, vram_dpmi.size - 1);
+	
+	__djgpp_nearptr_disable();
 	#endif
-
+	
 	return 0;
 }
 
 void gfx_TextOn(){
 	// Text mode on
-	outportb(0x62, GDC_COMMAND_START);
+	OUTPORT_DOS(0x62, GDC_COMMAND_START);
 }
 
 void gfx_TextOff(){
 	// Text mode off
-	outportb(0x62, GDC_COMMAND_STOP1);
+	OUTPORT_DOS(0x62, GDC_COMMAND_STOP1);
 }
+
+
+static void Print_text(const char *str)
+{
+	union REGS regs;
+	regs.h.cl = 0x10;
+	regs.h.ah = 0;
+	while(*str) {
+		regs.h.dl = *(str++);
+		int86(0xDC, &regs, &regs);
+	}
+	outp(0x64, 0); // VSync interrupt trigger	
+}
+
+static void ClearTextVRAM()
+{
+    unsigned long base_address = 0xA0000;
+    unsigned char buffer[16384] = {0};
+    dosmemput(buffer, sizeof(buffer), base_address);
+}
+
 
 static void PC9821_SetVideo(unsigned short width, unsigned short height, unsigned short flags, int argc, char** argv)
 {
 	// Initialise graphics to a set of configured defaults
-	int_fast8_t status;
 	
 	// Text mode off
-	outportb(0x62, GDC_COMMAND_STOP1);
+	//OUTPORT_DOS(0x62, GDC_COMMAND_STOP1);
 	
+	// Clear text layer
+	ClearTextVRAM();
+	
+	// Print command to disable text cursor
+	Print_text("\x1B[>5h");
+	
+	// Print command to disable system line
+	Print_text("\x1B[>1h");
+
 	screen_width = width;
 	screen_height = height;
 	SCREEN_SIZE = screen_width * screen_height;
 	quarter_scr = SCREEN_SIZE / 4;
 		
 	// HSYNC 24 KHz (640x400)
-	outportb(PEGC_SCANFREQ_ADDR, PEGC_SCANFREQ_24);
+	OUTPORT_DOS(PEGC_SCANFREQ_ADDR, PEGC_SCANFREQ_24);
 
 	// 256 color mode
-	outportb(PEGC_MODE_ADDR, 0x07);
-	outportb(PEGC_MODE_ADDR, PEGC_BPPMODE_256c);
-	outportb(PEGC_MODE_ADDR, PEGC_BPPMODE_SINGLE_PAGE);
-	outportb(PEGC_MODE_ADDR, 0x06);
+	OUTPORT_DOS(PEGC_MODE_ADDR, 0x07);
+	OUTPORT_DOS(PEGC_MODE_ADDR, PEGC_BPPMODE_256c);
+	OUTPORT_DOS(PEGC_MODE_ADDR, PEGC_BPPMODE_SINGLE_PAGE);
+	OUTPORT_DOS(PEGC_MODE_ADDR, 0x06);
+	
+	doublebuffer = malloc (GFX_COL_SIZE * GFX_ROW_SIZE);
 
 	// Enable Packed Pixel mode
 	#ifdef DJGPP
@@ -146,8 +195,7 @@ static void PC9821_SetVideo(unsigned short width, unsigned short height, unsigne
 	#endif
 
 	// Set up DPMI mapper for vram framebuffer regionbui
-	status = gfx_DPMI();
-	if (status < 0){
+	if (gfx_DPMI() < 0){
 		return;	
 	}
 	
@@ -157,32 +205,34 @@ static void PC9821_SetVideo(unsigned short width, unsigned short height, unsigne
 	#endif
 
 	// Set screen 0 to be active for drawing and active for display
-	outportb(PEGC_DRAW_SCREEN_SEL_ADDR, 0x00);
-	outportb(PEGC_DISP_SCREEN_SEL_ADDR, 0x00);
+	OUTPORT_DOS(PEGC_DRAW_SCREEN_SEL_ADDR, 0x00);
+	OUTPORT_DOS(PEGC_DISP_SCREEN_SEL_ADDR, 0x00);
 	
 	// Graphics mode on
-	outportb(PEGC_GDC_COMMAND_ADDR, GDC_COMMAND_START);
+	OUTPORT_DOS(PEGC_GDC_COMMAND_ADDR, GDC_COMMAND_START);
 	
 	// Set local vram_buffer to empty 
 	//memset(vram_buffer, 0, (GFX_ROW_SIZE * GFX_COL_SIZE));
 	//gfx_Clear();
 	//gfx_Flip();
+	
+	return;
 }
 
 
 static void PC9821_Draw_static_bitmap_normal(BITMAP *bmp, short x, short y, unsigned long offset)
 {
-	memcpy(doublebuffer, (byte far*) bmp->data + offset, (bmp->width*bmp->height));
+	memcpy(doublebuffer, (uint8_t far*) bmp->data + offset, (bmp->width*bmp->height));
 }
 
 static void PC9821_Draw_sprite_normal_trans(BITMAP *bmp, short x, short y, unsigned char frame)
 {
-	short i, j;
-	//word screen_offset = (y<<8)+(y<<6) + x;	
-	word screen_offset = x + (y * screen_width);
-	word bitmap_offset = 0;
-	byte data;
-	unsigned short sprite_offset = frame*(bmp->sprite_width*bmp->sprite_height);
+	unsigned short i, j;
+	//uint16_t screen_offset = (y<<8)+(y<<6) + x;	
+	uint16_t screen_offset = x + (y * screen_width);
+	uint16_t bitmap_offset = 0;
+	uint8_t data;
+	unsigned long sprite_offset = frame*(bmp->sprite_width*bmp->sprite_height);
 
 	for(j=0;j<bmp->height;j++)
 	{
@@ -197,19 +247,17 @@ static void PC9821_Draw_sprite_normal_trans(BITMAP *bmp, short x, short y, unsig
 
 static void PC9821_Draw_sprite_normal_notrans(BITMAP *bmp, short x, short y, unsigned char frame)
 {
-	short i, j;
-	//word screen_offset = (y<<8)+(y<<6) + x;	
-	word screen_offset = x + (y * screen_width);
-	word bitmap_offset = 0;
-	unsigned short sprite_offset = frame*(bmp->sprite_width*bmp->sprite_height);
+	short j;
+	//uint16_t screen_offset = (y<<8)+(y<<6) + x;	
+	uint16_t screen_offset = x + (y * screen_width);
+	uint16_t bitmap_offset = 0;
+	unsigned long sprite_offset = frame*(bmp->sprite_width*bmp->sprite_height);
 
 	for(j=0;j<bmp->height;j++)
 	{
-		for(i=0;i<bmp->width;i++,bitmap_offset++)
-		{
-			doublebuffer[screen_offset+x+i] = bmp->data[bitmap_offset+sprite_offset];
-		}
-		screen_offset+=screen_width;
+        memcpy(&doublebuffer[screen_offset], &bmp->data[bitmap_offset + sprite_offset], bmp->width * sizeof(unsigned char));
+        bitmap_offset += bmp->width;
+        screen_offset += screen_width;
 	}
 }
 
@@ -219,7 +267,7 @@ static void PC9821_Set_palette()
 	unsigned short i;
 	for(i=0;i<256;i++)
 	{
-		pal_Set(i, VGA_8158_GAMEPAL[(i*3)+0], VGA_8158_GAMEPAL[(i*3)+1], VGA_8158_GAMEPAL[(i*3)+2]);
+		pal_Set(i, palette_pc9821[(i*3)+0], palette_pc9821[(i*3)+1], palette_pc9821[(i*3)+2]);
 	}
 }
 
@@ -228,9 +276,11 @@ static void PC9821_Load_palette(const char *file)
 	int fd;
 	unsigned totalsize;
 	_dos_open(file, O_RDONLY, &fd);
-	_dos_read(fd, VGA_8158_GAMEPAL, sizeof(VGA_8158_GAMEPAL), &totalsize);
+	_dos_read(fd, (char*)&palette_pc9821, sizeof(palette_pc9821), &totalsize);
 	_dos_close(fd);
 }
+
+
 
 static void PC9821_Load_SIF(const char *file, BITMAP *b, unsigned short s_width, unsigned short s_height, unsigned char load_pal)
 {
@@ -291,10 +341,11 @@ static void PC9821_Load_SIF(const char *file, BITMAP *b, unsigned short s_width,
 
 static void PC9821_Wait_for_retrace(void) 
 {
-	/* wait until done with vertical retrace */
-	while ((inp(INPUT_STATUS) & VRETRACE)) ;
-	/* wait until done refreshing */
-	while (!(inp(INPUT_STATUS) & VRETRACE)) ;
+	/* Wait until vsync occurs. */
+	while (!(inp(GDC_GFX_STATUS) & GDC_STATUS_VSYNC)) {}
+	
+	/* Now wait until it's over. */
+	while (inp(GDC_GFX_STATUS)   & GDC_STATUS_VSYNC) {}
 }
 
 static void PC9821_Free_bmp(BITMAP bmp)
@@ -309,6 +360,7 @@ static void PC9821_Free_bmp(BITMAP bmp)
 static void PC9821_Clear_Screen()
 {
 	memset(doublebuffer, 0, (screen_width*screen_height));
+	ClearTextVRAM();
 }
 
 
@@ -319,7 +371,7 @@ static void PC9821_Flip()
 	#ifdef DJGPP
 	movedata(_my_ds(), (unsigned)doublebuffer, vram_dpmi_selector, 0, (GFX_ROWS * GFX_COLS));
 	#else
-	memcmy(pegc_fb_location, doublebuffer, GFX_ROWS * GFX_COLS);
+	memcpy(pegc_fb_location, doublebuffer, GFX_ROWS * GFX_COLS);
 	#endif
 }
 
@@ -330,12 +382,12 @@ static void PC9821_Kill()
 	#endif
 
 	// 16 Color mode
-	outportb(PEGC_MODE_ADDR, 0x07);
-	outportb(PEGC_MODE_ADDR, PEGC_BPPMODE_16c);
-	outportb(PEGC_MODE_ADDR, 0x06);
+	OUTPORT_DOS(PEGC_MODE_ADDR, 0x07);
+	OUTPORT_DOS(PEGC_MODE_ADDR, PEGC_BPPMODE_16c);
+	OUTPORT_DOS(PEGC_MODE_ADDR, 0x06);
 
 	// Graphics mode off
-	outportb(PEGC_GDC_COMMAND_ADDR, GDC_COMMAND_STOP1);
+	OUTPORT_DOS(PEGC_GDC_COMMAND_ADDR, GDC_COMMAND_STOP1);
 	
 	#ifdef DJGPP
 	// Free DPMI mapping
@@ -346,16 +398,35 @@ static void PC9821_Kill()
 	PC9821_Clear_Screen();
 	
 	// Text mode on
-	outportb(0x62, GDC_COMMAND_START);
+	OUTPORT_DOS(0x62, GDC_COMMAND_START);
 
 	#ifdef DJGPP
 	__djgpp_nearptr_disable();
 	#endif
+	
+	free(doublebuffer);
+	
+	// Print command to enable text cursor
+	Print_text("\x1B[>5l");
+	// Print command to enable system line
+	Print_text("\x1B[>1l");
 }
+
+static void Cursor_SetXY(unsigned char x, unsigned char y) 
+{
+	union REGS regs;
+	regs.h.cl = 0x10;
+	regs.h.ah = 3;
+	regs.h.dh = y;
+	regs.h.dl = x;
+	int86(0xDC, &regs, &regs);
+}
+
 
 static void PC9821_Print_Text(char* text, short x, short y)
 {
-	
+	Cursor_SetXY(x, y);
+	Print_text(text);
 }
 
 

@@ -48,6 +48,10 @@
 
 #define BITMAP_HEADER_SIZE 16
 
+#ifdef DJGPP
+#define far 
+#endif
+
 typedef struct tagBITMAP              /* the structure for a bitmap. */
 {
   uint16_t width;
@@ -100,11 +104,10 @@ extern VideoDevice Normal_PC9821_PGC;
 
 extern unsigned char *hold_screen;
 
-extern void fskip(FILE *fp, int num_bytes);
-extern void set_mode(byte mode);
+extern void set_mode(uint8_t mode);
 extern void load_bmp(const unsigned char *file, BITMAP *b);
 
-extern byte VGA_8158_GAMEPAL[769];
+extern uint8_t VGA_8158_GAMEPAL[769];
 
 
 #endif
